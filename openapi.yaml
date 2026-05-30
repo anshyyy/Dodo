@@ -1,0 +1,278 @@
+openapi: 3.0.3
+info:
+  title: Dodo Invoice & Payment Service
+  version: 0.1.0
+  description: Invoice, payment, and webhook registration API (USD integer cents).
+servers:
+  - url: http://localhost:8080
+security:
+  - ApiKeyAuth: []
+  - BearerAuth: []
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+    BearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+    Customer:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        business_id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+        created_at: { type: string, format: date-time }
+    LineItem:
+      type: object
+      required: [description, quantity, unit_amount_cents]
+      properties:
+        description: { type: string }
+        quantity: { type: integer, minimum: 1 }
+        unit_amount_cents: { type: integer, minimum: 0 }
+    Invoice:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        state:
+          type: string
+          enum: [draft, open, paid, void, uncollectible]
+        due_date: { type: string, format: date }
+        total_cents: { type: integer }
+        currency: { type: string, example: USD }
+        line_items:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/LineItem'
+              - type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  line_total_cents: { type: integer }
+    PaymentAttempt:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [processing, succeeded, failed]
+        failure_code: { type: string, nullable: true }
+        psp_ref: { type: string, format: uuid, nullable: true }
+        idempotency_key: { type: string }
+        created_at: { type: string, format: date-time }
+    PayResponse:
+      type: object
+      properties:
+        payment_attempt:
+          $ref: '#/components/schemas/PaymentAttempt'
+        invoice_state:
+          type: string
+          enum: [draft, open, paid, void, uncollectible]
+paths:
+  /health:
+    get:
+      security: []
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+  /api/v1/customers:
+    post:
+      summary: Create customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email]
+              properties:
+                name: { type: string }
+                email: { type: string }
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+    get:
+      summary: List customers
+      responses:
+        '200':
+          description: List
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Customer'
+  /api/v1/customers/{id}:
+    get:
+      summary: Get customer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/invoices:
+    post:
+      summary: Create invoice (server computes total)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_id, due_date, line_items]
+              properties:
+                customer_id: { type: string, format: uuid }
+                due_date: { type: string, format: date }
+                state: { type: string, enum: [draft, open] }
+                line_items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/LineItem'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+    get:
+      summary: List invoices
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [draft, open, paid, void, uncollectible]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Invoice'
+  /api/v1/invoices/{id}:
+    get:
+      summary: Get invoice
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+  /api/v1/invoices/{id}/pay:
+    post:
+      summary: Pay invoice (idempotent)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [card_token]
+              properties:
+                card_token: { type: string }
+      responses:
+        '200':
+          description: Payment completed or failed attempt recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayResponse'
+        '202':
+          description: PSP still processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayResponse'
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/webhook_endpoints:
+    post:
+      summary: Register webhook URL
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, secret]
+              properties:
+                url: { type: string, format: uri }
+                secret: { type: string }
+      responses:
+        '200':
+          description: Registered
+    get:
+      summary: List webhook endpoints
+      responses:
+        '200':
+          description: List
+  /mock-psp/v1/charges:
+    post:
+      security: []
+      summary: Mock payment processor
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [card_token]
+              properties:
+                card_token: { type: string }
+      responses:
+        '200':
+          description: Succeeded or failed charge result
