@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::api::error::{self, ApiError};
 use crate::api::extractors::AuthBusiness;
 use crate::api::AppState;
-use crate::repository::customer;
+use crate::repository::customer::{self, CustomerListFilters, CustomerListPage};
 use crate::services::invoice::NewLineItemInput;
 use crate::services::payment::{PayError, PayOutcome};
 use crate::services::webhook_endpoint::WebhookEndpointView;
@@ -52,12 +52,37 @@ async fn create_customer(
     Ok(Json(c))
 }
 
+fn default_customer_list_limit() -> i64 {
+    crate::services::customer::DEFAULT_CUSTOMER_LIST_LIMIT
+}
+
+#[derive(Deserialize)]
+struct ListCustomersQuery {
+    business_id: Option<Uuid>,
+    #[serde(default = "default_customer_list_limit")]
+    limit: i64,
+    #[serde(default)]
+    offset: i64,
+    email: Option<String>,
+    name: Option<String>,
+}
+
 async fn list_customers(
     auth: AuthBusiness,
     State(state): State<AppState>,
-) -> Result<Json<Vec<customer::Customer>>, ApiError> {
-    let list = state.customers.list(auth.business_id).await?;
-    Ok(Json(list))
+    Query(q): Query<ListCustomersQuery>,
+) -> Result<Json<CustomerListPage>, ApiError> {
+    let business_id = q.business_id.unwrap_or(auth.business_id);
+    let filters = CustomerListFilters {
+        business_id,
+        email: q.email.filter(|s| !s.is_empty()),
+        name: q.name.filter(|s| !s.is_empty()),
+    };
+    let page = state
+        .customers
+        .list(auth.business_id, filters, q.limit, q.offset)
+        .await?;
+    Ok(Json(page))
 }
 
 async fn get_customer(

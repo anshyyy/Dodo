@@ -23,6 +23,19 @@ impl From<CustomerError> for ApiError {
                 "customer with this email already exists",
             ),
             CustomerError::NotFound => error::not_found("customer not found"),
+            CustomerError::InvalidListPagination => ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_pagination",
+                format!(
+                    "limit must be 1..={} and offset must be >= 0",
+                    crate::services::customer::MAX_CUSTOMER_LIST_LIMIT
+                ),
+            ),
+            CustomerError::BusinessIdMismatch => ApiError::new(
+                StatusCode::FORBIDDEN,
+                "business_id_mismatch",
+                "business_id must match the authenticated business",
+            ),
             CustomerError::Internal(e) => error::internal(e.to_string()),
         }
     }

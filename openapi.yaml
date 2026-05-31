@@ -43,6 +43,39 @@ components:
         name: { type: string }
         email: { type: string, format: email }
         created_at: { type: string, format: date-time }
+    CustomerListPage:
+      type: object
+      required:
+        - business_id
+        - items
+        - total
+        - limit
+        - offset
+        - has_next
+        - has_previous
+      properties:
+        business_id: { type: string, format: uuid }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Customer'
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        offset: { type: integer, minimum: 0 }
+        has_next:
+          type: boolean
+          description: True if another page exists after this one
+        has_previous:
+          type: boolean
+          description: True if a page exists before this one
+        next_offset:
+          type: integer
+          minimum: 0
+          description: Suggested offset for the next page (omitted when has_next is false)
+        previous_offset:
+          type: integer
+          minimum: 0
+          description: Suggested offset for the previous page (omitted when has_previous is false)
     LineItem:
       type: object
       required: [description, quantity, unit_amount_cents]
@@ -129,18 +162,41 @@ paths:
           description: Missing or invalid X-Api-Key
     get:
       tags: [Customers]
-      summary: List customers
+      summary: List customers (paginated, filterable)
       security:
         - ApiKeyAuth: []
+      parameters:
+        - name: business_id
+          in: query
+          description: |
+            Tenant scope. Defaults to the business from the API key.
+            Must match the authenticated business if provided.
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: email
+          in: query
+          description: Case-insensitive substring match on email
+          schema: { type: string }
+        - name: name
+          in: query
+          description: Case-insensitive substring match on name
+          schema: { type: string }
       responses:
         '200':
-          description: List
+          description: Paginated list
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Customer'
+                $ref: '#/components/schemas/CustomerListPage'
+        '400':
+          description: Invalid limit or offset
+        '403':
+          description: business_id does not match authenticated business
   /api/v1/customers/{id}:
     get:
       summary: Get customer

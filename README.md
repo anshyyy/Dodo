@@ -10,7 +10,7 @@ docker compose up --build
 
 - API: `http://localhost:8080`
 - **Swagger UI:** `http://localhost:8080/docs`
-- OpenAPI spec: `http://localhost:8080/api/openapi.yaml`
+- OpenAPI spec: `http://localhost:8080/api/openapi.yaml` (from `/app/openapi.yaml` in the image — run `docker compose up --build` after editing `openapi.yaml`)
 - Health: `GET /health`
 - Mock PSP: `POST http://localhost:8080/mock-psp/v1/charges`
 

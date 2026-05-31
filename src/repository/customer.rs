@@ -64,17 +64,101 @@ pub async fn get(pool: &PgPool, business_id: Uuid, id: Uuid) -> anyhow::Result<O
     .map_err(Into::into)
 }
 
-pub async fn list(pool: &PgPool, business_id: Uuid) -> anyhow::Result<Vec<Customer>> {
-    sqlx::query_as::<_, Customer>(
+#[derive(Debug, Clone)]
+pub struct CustomerListFilters {
+    pub business_id: Uuid,
+    /// Case-insensitive substring match on email.
+    pub email: Option<String>,
+    /// Case-insensitive substring match on name.
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CustomerListPage {
+    pub business_id: Uuid,
+    pub items: Vec<Customer>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+    pub has_next: bool,
+    pub has_previous: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_offset: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_offset: Option<i64>,
+}
+
+fn pagination_meta(total: i64, limit: i64, offset: i64) -> (bool, bool, Option<i64>, Option<i64>) {
+    let has_previous = offset > 0;
+    let has_next = offset + limit < total;
+    let next_offset = has_next.then_some(offset + limit);
+    let previous_offset = has_previous.then_some((offset - limit).max(0));
+    (has_next, has_previous, next_offset, previous_offset)
+}
+
+fn ilike_contains(raw: &str) -> String {
+    let escaped = raw
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
+pub async fn list_page(
+    pool: &PgPool,
+    filters: &CustomerListFilters,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<CustomerListPage> {
+    let email_pat = filters.email.as_deref().map(ilike_contains);
+    let name_pat = filters.name.as_deref().map(ilike_contains);
+
+    let total: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(*)::bigint
+        FROM customers
+        WHERE business_id = $1
+          AND ($2::text IS NULL OR email ILIKE $2 ESCAPE '\')
+          AND ($3::text IS NULL OR name ILIKE $3 ESCAPE '\')
+        "#,
+    )
+    .bind(filters.business_id)
+    .bind(email_pat.as_deref())
+    .bind(name_pat.as_deref())
+    .fetch_one(pool)
+    .await?;
+
+    let items = sqlx::query_as::<_, Customer>(
         r#"
         SELECT id, business_id, name, email, created_at
         FROM customers
         WHERE business_id = $1
+          AND ($2::text IS NULL OR email ILIKE $2 ESCAPE '\')
+          AND ($3::text IS NULL OR name ILIKE $3 ESCAPE '\')
         ORDER BY created_at DESC
+        LIMIT $4 OFFSET $5
         "#,
     )
-    .bind(business_id)
+    .bind(filters.business_id)
+    .bind(email_pat.as_deref())
+    .bind(name_pat.as_deref())
+    .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
-    .await
-    .map_err(Into::into)
+    .await?;
+
+    let (has_next, has_previous, next_offset, previous_offset) =
+        pagination_meta(total.0, limit, offset);
+
+    Ok(CustomerListPage {
+        business_id: filters.business_id,
+        items,
+        total: total.0,
+        limit,
+        offset,
+        has_next,
+        has_previous,
+        next_offset,
+        previous_offset,
+    })
 }

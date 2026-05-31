@@ -2,7 +2,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::domain::{CustomerName, Email};
-use crate::repository::customer::{self, Customer, CustomerDbError};
+use crate::repository::customer::{self, Customer, CustomerDbError, CustomerListFilters, CustomerListPage};
+
+pub const DEFAULT_CUSTOMER_LIST_LIMIT: i64 = 50;
+pub const MAX_CUSTOMER_LIST_LIMIT: i64 = 100;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CustomerError {
@@ -14,6 +17,10 @@ pub enum CustomerError {
     DuplicateEmail,
     #[error("customer not found")]
     NotFound,
+    #[error("invalid list pagination")]
+    InvalidListPagination,
+    #[error("business_id does not match authenticated tenant")]
+    BusinessIdMismatch,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -56,8 +63,20 @@ impl CustomerService {
             .ok_or(CustomerError::NotFound)
     }
 
-    pub async fn list(&self, business_id: Uuid) -> Result<Vec<Customer>, CustomerError> {
-        customer::list(&self.pool, business_id)
+    pub async fn list(
+        &self,
+        authenticated_business_id: Uuid,
+        filters: CustomerListFilters,
+        limit: i64,
+        offset: i64,
+    ) -> Result<CustomerListPage, CustomerError> {
+        if filters.business_id != authenticated_business_id {
+            return Err(CustomerError::BusinessIdMismatch);
+        }
+        if limit < 1 || limit > MAX_CUSTOMER_LIST_LIMIT || offset < 0 {
+            return Err(CustomerError::InvalidListPagination);
+        }
+        customer::list_page(&self.pool, &filters, limit, offset)
             .await
             .map_err(CustomerError::Internal)
     }
