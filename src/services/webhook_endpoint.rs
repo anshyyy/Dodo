@@ -34,6 +34,12 @@ impl WebhookEndpointService {
         let ep = webhook::create(&self.pool, business_id, url, secret)
             .await
             .map_err(WebhookEndpointError::Internal)?;
+        tracing::info!(
+            business_id = %business_id,
+            webhook_endpoint_id = %ep.id,
+            url = %ep.url,
+            "webhook endpoint registered"
+        );
         Ok(WebhookEndpointView {
             id: ep.id,
             url: ep.url,

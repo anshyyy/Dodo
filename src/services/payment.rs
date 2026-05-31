@@ -55,6 +55,12 @@ impl PaymentService {
             if stored.request_hash != hash {
                 return Ok(Err(PayError::IdempotencyMismatch));
             }
+            tracing::info!(
+                business_id = %business_id,
+                invoice_id = %invoice_id,
+                idempotency_key = %idempotency_key,
+                "payment idempotency replay (stored response)"
+            );
             return Ok(Ok(PayOutcome::Replay {
                 status: stored.response_status,
                 body: stored.response_body,
@@ -109,6 +115,14 @@ impl PaymentService {
         };
         tx.commit().await?;
 
+        tracing::info!(
+            business_id = %business_id,
+            invoice_id = %invoice_id,
+            payment_attempt_id = %attempt.id,
+            idempotency_key = %idempotency_key,
+            "payment attempt started (calling PSP)"
+        );
+
         let pool = self.pool.clone();
         let psp = self.psp.clone();
         let config = self.config.clone();
@@ -144,6 +158,12 @@ impl PaymentService {
             Ok(Ok(Err(e))) => Err(e),
             Ok(Err(join)) => Err(anyhow::anyhow!("task join: {join}")),
             Err(_) => {
+                tracing::info!(
+                    business_id = %business_id,
+                    invoice_id = %invoice_id,
+                    payment_attempt_id = %attempt_id,
+                    "payment PSP still processing; returning 202 to client"
+                );
                 let attempt = payment::get(&self.pool, attempt_id)
                     .await?
                     .unwrap_or(attempt);
@@ -203,15 +223,15 @@ async fn process_psp_result(
     card_token: &str,
     idempotency_key: &str,
     request_path: &str,
-    request_body_raw: &str,
+    request_body_raw: &str, 
     req_hash: &str,
     _config: Config,
 ) -> anyhow::Result<PayOutcome> {
-    let psp_result = psp.charge(card_token).await;
+    let psp_result: Result<PspChargeResponse, PspError> = psp.charge(card_token).await;
 
     match psp_result {
         Ok(PspChargeResponse::Succeeded { psp_ref }) => {
-            let mut tx = pool.begin().await?;
+            let mut tx: sqlx::Transaction<'_, sqlx::Postgres> = pool.begin().await?;
             let locked = invoice::lock_for_update(&mut tx, business_id, invoice_id).await?;
             let Some((_id, state, _)) = locked else {
                 return Err(anyhow::anyhow!("invoice missing"));
@@ -257,6 +277,13 @@ async fn process_psp_result(
                     );
                     webhook::enqueue_in_tx(&mut tx, business_id, "invoice.paid", payload).await?;
                     tx.commit().await?;
+                    tracing::info!(
+                        business_id = %business_id,
+                        invoice_id = %invoice_id,
+                        payment_attempt_id = %attempt_id,
+                        psp_ref = %psp_ref,
+                        "payment succeeded; invoice marked paid"
+                    );
                 }
             }
 

@@ -177,6 +177,7 @@ async fn pay_invoice(
     headers: HeaderMap,
     Json(body): Json<PayRequest>,
 ) -> Result<Response, ApiError> {
+    
     let idem = headers
         .get("Idempotency-Key")
         .and_then(|v| v.to_str().ok())

@@ -109,6 +109,7 @@ Environment variables (see [`.env.example`](.env.example)):
 | `MOCK_PSP_BASE_URL` | Base URL for HTTP PSP calls (default same server) |
 | `PAY_SYNC_WAIT_SECS` | Max wait on `/pay` before returning 202 |
 | `PSP_HTTP_TIMEOUT_SECS` | Background PSP HTTP client timeout |
-| `RUST_LOG` | Tracing filter |
+| `RUST_LOG` | Tracing filter (e.g. `dodo_invoice_service=info,tower_http=info`) |
+| `LOG_FORMAT` | Set to `json` for structured JSON logs (used in `docker compose`) |
 
 **Note:** `.env` is in `.gitignore` so secrets are not committed. Use `.env.example` as the template.

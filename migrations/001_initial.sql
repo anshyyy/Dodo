@@ -1,6 +1,6 @@
 -- Businesses and API keys
 CREATE TABLE businesses (
-    id UUID PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -113,7 +113,4 @@ CREATE TABLE webhook_events (
 CREATE INDEX idx_webhook_events_pending ON webhook_events(status, next_attempt_at)
     WHERE status = 'pending';
 
--- Seed demo business and API key (hash of "dodo_test_key_demo12345678901234567890")
--- Plain key for README: dodo_test_key_demo12345678901234567890
-INSERT INTO businesses (id, name) VALUES
-    ('11111111-1111-1111-1111-111111111111', 'Demo Business');
+-- Demo business and API key are seeded at app startup (see ensure_demo_key in api_key.rs).

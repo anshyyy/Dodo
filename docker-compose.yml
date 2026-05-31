@@ -25,7 +25,8 @@ services:
       MOCK_PSP_BASE_URL: http://app:8080
       PAY_SYNC_WAIT_SECS: "8"
       PSP_HTTP_TIMEOUT_SECS: "35"
-      RUST_LOG: dodo_invoice_service=debug,tower_http=info
+      RUST_LOG: dodo_invoice_service=info,tower_http=info
+      LOG_FORMAT: json
     depends_on:
       postgres:
         condition: service_healthy

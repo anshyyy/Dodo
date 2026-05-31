@@ -7,6 +7,8 @@ mod service_error;
 use axum::Router;
 use sqlx::PgPool;
 use std::sync::Arc;
+use tower_http::trace::TraceLayer;
+use tracing::Level;
 
 use crate::config::Config;
 use crate::services::{
@@ -29,12 +31,27 @@ pub struct AppState {
 pub fn build_router(state: AppState, _config: &Config) -> Router {
     let psp_router = crate::mock_psp::router();
 
+    let trace = TraceLayer::new_for_http()
+        .on_response(
+            |response: &axum::http::Response<_>,
+             latency: std::time::Duration,
+             _span: &tracing::Span| {
+                tracing::event!(
+                    Level::INFO,
+                    status = response.status().as_u16(),
+                    latency_ms = latency.as_millis() as u64,
+                    "http response"
+                );
+            },
+        );
+
     Router::new()
         .merge(docs::routes())
         .nest("/api/v1", routes::v1_routes(state))
         .nest("/mock-psp", psp_router)
         .route("/", axum::routing::get(root))
         .route("/health", axum::routing::get(health))
+        .layer(trace)
 }
 
 async fn root() -> axum::Json<serde_json::Value> {

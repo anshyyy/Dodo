@@ -3,25 +3,17 @@
 pub mod api;
 pub mod config;
 pub mod domain;
+pub mod logging;
 pub mod mock_psp;
 pub mod repository;
 pub mod services;
 pub mod worker;
 
 use config::Config;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 pub async fn run() -> anyhow::Result<()> {
-    // Optional: load `.env` from project root (ignored by git). Docker Compose sets env directly.
     dotenvy::dotenv().ok();
-
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "dodo_invoice_service=debug,tower_http=info".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    logging::init();
 
     let config = Config::from_env()?;
     let pool = sqlx::postgres::PgPoolOptions::new()
@@ -29,7 +21,6 @@ pub async fn run() -> anyhow::Result<()> {
         .connect(&config.database_url)
         .await?;
 
-    sqlx::migrate!("./migrations").run(&pool).await?;
     repository::api_key::ensure_demo_key(&pool).await?;
 
     worker::spawn(pool.clone());

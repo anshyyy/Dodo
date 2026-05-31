@@ -69,6 +69,12 @@ pub async fn enqueue_in_tx(
     .bind(payload)
     .execute(&mut **tx)
     .await?;
+    tracing::info!(
+        webhook_event_id = %id,
+        business_id = %business_id,
+        event_type = %event_type,
+        "webhook event enqueued"
+    );
     Ok(id)
 }
 
@@ -91,6 +97,12 @@ pub async fn enqueue(
     .bind(payload)
     .execute(pool)
     .await?;
+    tracing::info!(
+        webhook_event_id = %id,
+        business_id = %business_id,
+        event_type = %event_type,
+        "webhook event enqueued"
+    );
     Ok(())
 }
 
@@ -172,6 +184,11 @@ pub async fn schedule_retry(pool: &PgPool, id: Uuid, attempt_count: i32) -> anyh
         .bind(id)
         .execute(pool)
         .await?;
+        tracing::error!(
+            webhook_event_id = %id,
+            attempt_count = attempt_count,
+            "webhook event marked dead after max delivery attempts"
+        );
     } else {
         let delay = BACKOFF_SECS[(attempt_count - 1).max(0) as usize];
         sqlx::query(
@@ -186,6 +203,12 @@ pub async fn schedule_retry(pool: &PgPool, id: Uuid, attempt_count: i32) -> anyh
         .bind(id)
         .execute(pool)
         .await?;
+        tracing::info!(
+            webhook_event_id = %id,
+            attempt_count = attempt_count,
+            retry_after_secs = delay,
+            "webhook event scheduled for retry"
+        );
     }
     Ok(())
 }

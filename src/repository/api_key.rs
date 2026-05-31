@@ -98,18 +98,35 @@ pub async fn insert_key(
     })
 }
 
+/// Demo tenant from migration seed (`Demo Business`); created with a random UUID if missing.
+async fn demo_business_id(pool: &PgPool) -> anyhow::Result<Uuid> {
+    const DEMO_NAME: &str = "Demo Business";
+    if let Some((id,)) = sqlx::query_as::<_, (Uuid,)>(
+        "SELECT id FROM businesses WHERE name = $1 LIMIT 1",
+    )
+    .bind(DEMO_NAME)
+    .fetch_optional(pool)
+    .await?
+    {
+        return Ok(id);
+    }
+    let (id,) = sqlx::query_as::<_, (Uuid,)>(
+        "INSERT INTO businesses (name) VALUES ($1) RETURNING id",
+    )
+    .bind(DEMO_NAME)
+    .fetch_one(pool)
+    .await?;
+    Ok(id)
+}
+
 pub async fn ensure_demo_key(pool: &PgPool) -> anyhow::Result<()> {
     const DEMO_KEY: &str = "dodo_test_key_demo12345678901234567890";
     let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM api_keys")
         .fetch_one(pool)
         .await?;
     if count.0 == 0 {
-        insert_key(
-            pool,
-            Uuid::parse_str("11111111-1111-1111-1111-111111111111")?,
-            DEMO_KEY,
-        )
-        .await?;
+        let business_id = demo_business_id(pool).await?;
+        insert_key(pool, business_id, DEMO_KEY).await?;
         tracing::info!("Seeded demo API key (see README)");
     }
     Ok(())
