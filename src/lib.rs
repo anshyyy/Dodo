@@ -21,6 +21,8 @@ pub async fn run() -> anyhow::Result<()> {
         .connect(&config.database_url)
         .await?;
 
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
     repository::api_key::ensure_demo_key(&pool).await?;
 
     worker::spawn(pool.clone());
