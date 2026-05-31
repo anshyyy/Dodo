@@ -15,7 +15,35 @@ impl InvoiceState {
     pub fn is_terminal(self) -> bool {
         matches!(self, Self::Paid | Self::Void | Self::Uncollectible)
     }
+
+    /// Initial state when creating an invoice (`None` means open).
+    pub fn from_create_option(raw: Option<&str>) -> Result<Self, InvalidCreateInvoiceState> {
+        match raw {
+            None | Some("open") => Ok(Self::Open),
+            Some("draft") => Ok(Self::Draft),
+            Some(_) => Err(InvalidCreateInvoiceState),
+        }
+    }
+
+    pub fn from_filter_str(raw: &str) -> Result<Self, InvalidInvoiceStateFilter> {
+        match raw {
+            "draft" => Ok(Self::Draft),
+            "open" => Ok(Self::Open),
+            "paid" => Ok(Self::Paid),
+            "void" => Ok(Self::Void),
+            "uncollectible" => Ok(Self::Uncollectible),
+            _ => Err(InvalidInvoiceStateFilter),
+        }
+    }
 }
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[error("state must be open or draft")]
+pub struct InvalidCreateInvoiceState;
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[error("unknown state filter")]
+pub struct InvalidInvoiceStateFilter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvoiceEvent {

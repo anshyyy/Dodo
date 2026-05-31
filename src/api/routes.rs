@@ -6,15 +6,16 @@ use axum::{
     Json, Router,
 };
 use chrono::NaiveDate;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::api::error::{self, ApiError};
 use crate::api::extractors::AuthBusiness;
 use crate::api::AppState;
-use crate::domain::InvoiceState;
-use crate::repository::{customer, invoice, webhook};
+use crate::repository::customer;
+use crate::services::invoice::NewLineItemInput;
 use crate::services::payment::{PayError, PayOutcome};
+use crate::services::webhook_endpoint::WebhookEndpointView;
 
 /// HTTP path prefix for versioned REST API (used in idempotency hashes).
 pub const API_V1_PREFIX: &str = "/api/v1";
@@ -44,19 +45,10 @@ async fn create_customer(
     State(state): State<AppState>,
     Json(body): Json<CreateCustomerRequest>,
 ) -> Result<Json<customer::Customer>, ApiError> {
-    let c = customer::create(&state.pool, auth.business_id, &body.name, &body.email)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("duplicate") {
-                ApiError::new(
-                    StatusCode::CONFLICT,
-                    "customer_exists",
-                    "customer with this email already exists",
-                )
-            } else {
-                error::internal(e.to_string())
-            }
-        })?;
+    let c = state
+        .customers
+        .create(auth.business_id, &body.name, &body.email)
+        .await?;
     Ok(Json(c))
 }
 
@@ -64,9 +56,7 @@ async fn list_customers(
     auth: AuthBusiness,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<customer::Customer>>, ApiError> {
-    let list = customer::list(&state.pool, auth.business_id)
-        .await
-        .map_err(|e| error::internal(e.to_string()))?;
+    let list = state.customers.list(auth.business_id).await?;
     Ok(Json(list))
 }
 
@@ -75,10 +65,7 @@ async fn get_customer(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<customer::Customer>, ApiError> {
-    let c = customer::get(&state.pool, auth.business_id, id)
-        .await
-        .map_err(|e| error::internal(e.to_string()))?
-        .ok_or_else(|| error::not_found("customer not found"))?;
+    let c = state.customers.get(auth.business_id, id).await?;
     Ok(Json(c))
 }
 
@@ -102,54 +89,27 @@ async fn create_invoice(
     auth: AuthBusiness,
     State(state): State<AppState>,
     Json(body): Json<CreateInvoiceRequest>,
-) -> Result<Json<invoice::Invoice>, ApiError> {
-    let cust = customer::get(&state.pool, auth.business_id, body.customer_id)
-        .await
-        .map_err(|e| error::internal(e.to_string()))?
-        .ok_or_else(|| error::not_found("customer not found"))?;
-
-    let initial_state = match body.state.as_deref() {
-        Some("draft") => InvoiceState::Draft,
-        None | Some("open") => InvoiceState::Open,
-        _ => {
-            return Err(ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "invalid_state",
-                "state must be open or draft",
-            ))
-        }
-    };
-
-    let items: Vec<invoice::NewLineItem> = body
+) -> Result<Json<crate::repository::invoice::Invoice>, ApiError> {
+    let items: Vec<NewLineItemInput> = body
         .line_items
         .into_iter()
-        .map(|i| invoice::NewLineItem {
+        .map(|i| NewLineItemInput {
             description: i.description,
             quantity: i.quantity,
             unit_amount_cents: i.unit_amount_cents,
         })
         .collect();
 
-    let inv = invoice::create(
-        &state.pool,
-        auth.business_id,
-        cust.id,
-        body.due_date,
-        &items,
-        initial_state,
-    )
-    .await
-    .map_err(|e| error::internal(e.to_string()))?;
-
-    let state_str = serde_json::to_value(inv.state)
-        .ok()
-        .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "open".into());
-    let payload =
-        webhook::invoice_payload("invoice.created", inv.id, &state_str, inv.total_cents);
-    webhook::enqueue(&state.pool, auth.business_id, "invoice.created", payload)
-        .await
-        .map_err(|e| error::internal(e.to_string()))?;
+    let inv = state
+        .invoices
+        .create(
+            auth.business_id,
+            body.customer_id,
+            body.due_date,
+            items,
+            body.state.as_deref(),
+        )
+        .await?;
 
     Ok(Json(inv))
 }
@@ -163,11 +123,11 @@ async fn list_invoices(
     auth: AuthBusiness,
     State(state): State<AppState>,
     Query(q): Query<ListInvoicesQuery>,
-) -> Result<Json<Vec<invoice::Invoice>>, ApiError> {
-    let filter = q.state.as_deref().map(parse_state).transpose()?;
-    let list = invoice::list(&state.pool, auth.business_id, filter)
-        .await
-        .map_err(|e| error::internal(e.to_string()))?;
+) -> Result<Json<Vec<crate::repository::invoice::Invoice>>, ApiError> {
+    let list = state
+        .invoices
+        .list(auth.business_id, q.state.as_deref())
+        .await?;
     Ok(Json(list))
 }
 
@@ -175,15 +135,12 @@ async fn get_invoice(
     auth: AuthBusiness,
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<invoice::Invoice>, ApiError> {
-    let inv = invoice::get(&state.pool, auth.business_id, id)
-        .await
-        .map_err(|e| error::internal(e.to_string()))?
-        .ok_or_else(|| error::not_found("invoice not found"))?;
+) -> Result<Json<crate::repository::invoice::Invoice>, ApiError> {
+    let inv = state.invoices.get(auth.business_id, id).await?;
     Ok(Json(inv))
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, serde::Serialize)]
 struct PayRequest {
     card_token: String,
 }
@@ -257,57 +214,22 @@ struct CreateWebhookRequest {
     secret: String,
 }
 
-#[derive(Serialize)]
-struct WebhookEndpointResponse {
-    id: Uuid,
-    url: String,
-    enabled: bool,
-}
-
 async fn create_webhook(
     auth: AuthBusiness,
     State(state): State<AppState>,
     Json(body): Json<CreateWebhookRequest>,
-) -> Result<Json<WebhookEndpointResponse>, ApiError> {
-    let ep = webhook::create(&state.pool, auth.business_id, &body.url, &body.secret)
-        .await
-        .map_err(|e| error::internal(e.to_string()))?;
-    Ok(Json(WebhookEndpointResponse {
-        id: ep.id,
-        url: ep.url,
-        enabled: ep.enabled,
-    }))
+) -> Result<Json<WebhookEndpointView>, ApiError> {
+    let ep = state
+        .webhooks
+        .create(auth.business_id, &body.url, &body.secret)
+        .await?;
+    Ok(Json(ep))
 }
 
 async fn list_webhooks(
     auth: AuthBusiness,
     State(state): State<AppState>,
-) -> Result<Json<Vec<WebhookEndpointResponse>>, ApiError> {
-    let eps = webhook::list(&state.pool, auth.business_id)
-        .await
-        .map_err(|e| error::internal(e.to_string()))?;
-    Ok(Json(
-        eps.into_iter()
-            .map(|e| WebhookEndpointResponse {
-                id: e.id,
-                url: e.url,
-                enabled: e.enabled,
-            })
-            .collect(),
-    ))
-}
-
-fn parse_state(s: &str) -> Result<InvoiceState, ApiError> {
-    match s {
-        "draft" => Ok(InvoiceState::Draft),
-        "open" => Ok(InvoiceState::Open),
-        "paid" => Ok(InvoiceState::Paid),
-        "void" => Ok(InvoiceState::Void),
-        "uncollectible" => Ok(InvoiceState::Uncollectible),
-        _ => Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_state",
-            "unknown state filter",
-        )),
-    }
+) -> Result<Json<Vec<WebhookEndpointView>>, ApiError> {
+    let eps = state.webhooks.list(auth.business_id).await?;
+    Ok(Json(eps))
 }

@@ -2,6 +2,14 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+#[derive(Debug, thiserror::Error)]
+pub enum CustomerDbError {
+    #[error("customer with this email already exists")]
+    DuplicateEmail,
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+}
+
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
 pub struct Customer {
     pub id: Uuid,
@@ -16,7 +24,7 @@ pub async fn create(
     business_id: Uuid,
     name: &str,
     email: &str,
-) -> anyhow::Result<Customer> {
+) -> Result<Customer, CustomerDbError> {
     let id = Uuid::new_v4();
     sqlx::query_as::<_, Customer>(
         r#"
@@ -31,7 +39,14 @@ pub async fn create(
     .bind(email)
     .fetch_one(pool)
     .await
-    .map_err(Into::into)
+    .map_err(|e| {
+        if let sqlx::Error::Database(db) = &e {
+            if db.code().as_deref() == Some("23505") {
+                return CustomerDbError::DuplicateEmail;
+            }
+        }
+        CustomerDbError::Database(e)
+    })
 }
 
 pub async fn get(pool: &PgPool, business_id: Uuid, id: Uuid) -> anyhow::Result<Option<Customer>> {

@@ -2,21 +2,24 @@ openapi: 3.0.3
 info:
   title: Dodo Invoice & Payment Service
   version: 0.1.0
-  description: Invoice, payment, and webhook registration API (USD integer cents).
+  description: |
+    Invoice, payment, and webhook registration API (USD integer cents).
+
+    **Authentication:** Click **Authorize** and set **X-Api-Key** to the demo API key from the README
+    (`dodo_test_key_demo12345678901234567890`). No separate Bearer/JWT token is used.
 servers:
   - url: http://localhost:8080
 security:
   - ApiKeyAuth: []
-  - BearerAuth: []
 components:
   securitySchemes:
     ApiKeyAuth:
       type: apiKey
       in: header
       name: X-Api-Key
-    BearerAuth:
-      type: http
-      scheme: bearer
+      description: |
+        Raw API key value (not a JWT). Demo key seeded on startup:
+        `dodo_test_key_demo12345678901234567890`
   schemas:
     ErrorEnvelope:
       type: object
@@ -97,7 +100,10 @@ paths:
           description: OK
   /api/v1/customers:
     post:
+      tags: [Customers]
       summary: Create customer
+      security:
+        - ApiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -107,7 +113,7 @@ paths:
               required: [name, email]
               properties:
                 name: { type: string }
-                email: { type: string }
+                email: { type: string, format: email }
       responses:
         '200':
           description: Created
@@ -115,8 +121,17 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Customer'
+        '400':
+          description: Invalid name or email
+        '409':
+          description: Customer with this email already exists
+        '401':
+          description: Missing or invalid X-Api-Key
     get:
+      tags: [Customers]
       summary: List customers
+      security:
+        - ApiKeyAuth: []
       responses:
         '200':
           description: List

@@ -2,17 +2,27 @@ pub mod docs;
 pub mod error;
 pub mod extractors;
 pub mod routes;
+mod service_error;
 
 use axum::Router;
 use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::services::{payment::PaymentService, psp_client::PspClient};
+use crate::services::{
+    customer::CustomerService,
+    invoice::InvoiceService,
+    payment::PaymentService,
+    psp_client::PspClient,
+    webhook_endpoint::WebhookEndpointService,
+};
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
+    pub customers: Arc<CustomerService>,
+    pub invoices: Arc<InvoiceService>,
+    pub webhooks: Arc<WebhookEndpointService>,
     pub payments: Arc<PaymentService>,
 }
 
@@ -47,5 +57,11 @@ pub fn build_state(pool: PgPool, config: Config) -> AppState {
         config.psp_http_timeout_secs,
     ));
     let payments = Arc::new(PaymentService::new(pool.clone(), psp, config));
-    AppState { pool, payments }
+    AppState {
+        pool: pool.clone(),
+        customers: Arc::new(CustomerService::new(pool.clone())),
+        invoices: Arc::new(InvoiceService::new(pool.clone())),
+        webhooks: Arc::new(WebhookEndpointService::new(pool)),
+        payments,
+    }
 }

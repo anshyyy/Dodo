@@ -222,3 +222,19 @@ async fn psp_network_error_does_not_corrupt_invoice() {
             .unwrap();
     assert_eq!(state.0, "open");
 }
+
+#[tokio::test]
+async fn create_customer_rejects_invalid_email() {
+    let env = setup().await;
+    let resp = env
+        .client
+        .post(format!("{}/api/v1/customers", env.base))
+        .headers(auth_headers(None))
+        .json(&json!({"name": "Jane", "email": "string"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "invalid_email");
+}
