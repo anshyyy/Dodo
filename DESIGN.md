@@ -13,19 +13,99 @@ erDiagram
     invoices ||--o{ invoice_line_items : contains
     invoices ||--o{ payment_attempts : has
     businesses ||--o{ idempotency_keys : stores
+
+    businesses {
+        uuid id PK
+        text name
+        timestamptz created_at
+    }
+    api_keys {
+        uuid id PK
+        uuid business_id FK
+        text key_prefix
+        text key_hash UK
+        timestamptz revoked_at
+        timestamptz created_at
+    }
+    customers {
+        uuid id PK
+        uuid business_id FK
+        text name
+        text email
+        timestamptz created_at
+    }
+    invoices {
+        uuid id PK
+        uuid business_id FK
+        uuid customer_id FK
+        invoice_state state
+        date due_date
+        bigint total_cents
+        text currency
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    invoice_line_items {
+        uuid id PK
+        uuid invoice_id FK
+        text description
+        int quantity
+        bigint unit_amount_cents
+        bigint line_total_cents
+    }
+    payment_attempts {
+        uuid id PK
+        uuid invoice_id FK
+        payment_attempt_status status
+        text failure_code
+        uuid psp_ref
+        text idempotency_key
+        text card_token_fingerprint
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    idempotency_keys {
+        uuid id PK
+        uuid business_id FK
+        text idempotency_key
+        text request_hash
+        int response_status
+        jsonb response_body
+        timestamptz created_at
+    }
+    webhook_endpoints {
+        uuid id PK
+        uuid business_id FK
+        text url
+        text secret
+        boolean enabled
+        timestamptz created_at
+    }
+    webhook_events {
+        uuid id PK
+        uuid business_id FK
+        text event_type
+        jsonb payload
+        webhook_event_status status
+        int attempt_count
+        timestamptz next_attempt_at
+        timestamptz created_at
+    }
 ```
 
-| Table | Purpose | PK | Notable indexes |
-|-------|---------|-----|-----------------|
-| `businesses` | Tenant root | UUID | — |
-| `api_keys` | Auth (hashed) | UUID | `key_hash` unique |
-| `customers` | `(business_id, email)` unique | UUID | `business_id` |
-| `invoices` | State, `total_cents` (BIGINT), `due_date` | UUID | `(business_id, state)` |
-| `invoice_line_items` | `quantity`, `unit_amount_cents`, computed `line_total_cents` | UUID | `invoice_id` |
-| `payment_attempts` | PSP outcome | UUID | partial unique: one `succeeded` per invoice; one `processing` per invoice |
-| `idempotency_keys` | `(business_id, idempotency_key)` → stored HTTP response | UUID | unique composite |
-| `webhook_endpoints` | Receiver URL + signing secret | UUID | `business_id` |
-| `webhook_events` | Outbox for delivery | UUID | pending `(status, next_attempt_at)` |
+**Enums:** `invoice_state` (`draft`, `open`, `paid`, `void`, `uncollectible`); `payment_attempt_status` (`processing`, `succeeded`, `failed`); `webhook_event_status` (`pending`, `delivered`, `dead`).
+
+| Table | Purpose | Notable constraints / indexes |
+|-------|---------|-------------------------------|
+| `businesses` | Tenant root | `id` default `gen_random_uuid()` |
+| `api_keys` | Auth (Argon2 hash + display prefix) | `key_hash` unique; `idx_api_keys_business_id` |
+| `customers` | Per-tenant customer | `UNIQUE (business_id, email)`; `idx_customers_business_id` |
+| `invoices` | Billable document + state | `idx_invoices_business_state`; money in `total_cents` |
+| `invoice_line_items` | Server-computed lines | `quantity > 0`, non-negative cent amounts; `idx_line_items_invoice_id` |
+| `payment_attempts` | Append-only PSP outcomes | partial unique: one `succeeded` per invoice; one `processing` per invoice |
+| `idempotency_keys` | Stored idempotent HTTP responses | `UNIQUE (business_id, idempotency_key)` |
+| `webhook_endpoints` | Receiver URL + HMAC secret | `idx_webhook_endpoints_business_id` |
+| `webhook_events` | Delivery outbox | `idx_webhook_events_pending` on `(status, next_attempt_at)` where `pending` |
 
 **Why this shape:** Invoices store server-computed totals so money never depends on client input. Payment attempts are append-only outcome records (not a second ledger). Idempotency and webhook outbox are separate tables so request replay and async delivery do not complicate core invoice rows.
 

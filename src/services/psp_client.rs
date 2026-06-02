@@ -39,7 +39,7 @@ impl PspClient {
 
     pub async fn charge(&self, card_token: &str) -> Result<PspChargeResponse, PspError> {
         let url = format!("{}/mock-psp/v1/charges", self.base_url.trim_end_matches('/'));
-        let resp = self
+        let resp: reqwest::Response = self
             .http
             .post(&url)
             .json(&PspChargeRequest { card_token })

@@ -25,6 +25,7 @@ impl FromRequestParts<AppState> for AuthBusiness {
             .await
             .map_err(|e| crate::api::error::internal(e.to_string()))?
             .ok_or_else(crate::api::error::unauthorized)?;
+        
         Ok(AuthBusiness {
             business_id: record.business_id,
             api_key_id: record.id,
